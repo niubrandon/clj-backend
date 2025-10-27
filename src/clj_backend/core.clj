@@ -4,47 +4,67 @@
             [ring.middleware.json :refer [wrap-json-body wrap-json-response]]
             [ring.middleware.defaults :refer [wrap-defaults api-defaults]]
             [org.httpkit.server :refer [run-server]]
-            [cheshire.core :as json])
+            [cheshire.core :as json]
+            [clj-backend.db :as db]
+            [clj-backend.migrations :as migrations]
+            [clojure.java.jdbc :as jdbc])
+  (:import [java.util UUID])
   (:gen-class))
 
-;; In-memory storage for bikes
-(def bikes (atom {}))
+;; Database functions
+(defn get-all-bikes []
+  (jdbc/query {:datasource @db/datasource}
+              ["SELECT id, brand, model, year, color, price FROM bikes ORDER BY created_at DESC"]))
 
-;; Bike data model
-(defn create-bike [id brand model year color price]
-  {:id id
-   :brand brand
-   :model model
-   :year year
-   :color color
-   :price price})
+(defn get-bike-by-id [id]
+  (first (jdbc/query {:datasource @db/datasource}
+                     ["SELECT id, brand, model, year, color, price FROM bikes WHERE id = ?::uuid" id])))
+
+(defn create-bike! [brand model year color price]
+  (let [id (UUID/randomUUID)]
+    (jdbc/insert! {:datasource @db/datasource}
+                  :bikes
+                  {:id id
+                   :brand brand
+                   :model model
+                   :year year
+                   :color color
+                   :price price})
+    {:id (str id)
+     :brand brand
+     :model model
+     :year year
+     :color color
+     :price price}))
 
 ;; Routes
 (defroutes app-routes
   ;; POST /bikes - Create a new bike
   (POST "/bikes" request
-    (let [body (:body request)
-          id (str (java.util.UUID/randomUUID))
-          bike (create-bike id
-                           (:brand body)
-                           (:model body)
-                           (:year body)
-                           (:color body)
-                           (:price body))]
-      (swap! bikes assoc id bike)
-      {:status 201
-       :headers {"Content-Type" "application/json"}
-       :body (json/generate-string bike)}))
+    (try
+      (let [body (:body request)
+            bike (create-bike! (:brand body)
+                               (:model body)
+                               (:year body)
+                               (:color body)
+                               (bigdec (:price body)))]
+        {:status 201
+         :headers {"Content-Type" "application/json"}
+         :body (json/generate-string bike)})
+      (catch Exception e
+        {:status 500
+         :headers {"Content-Type" "application/json"}
+         :body (json/generate-string {:error (.getMessage e)})})))
 
   ;; GET /bikes - Get all bikes
   (GET "/bikes" []
     {:status 200
      :headers {"Content-Type" "application/json"}
-       :body (json/generate-string (vals @bikes))})
+     :body (json/generate-string (get-all-bikes))})
 
   ;; GET /bikes/:id - Get a specific bike
   (GET "/bikes/:id" [id]
-    (if-let [bike (get @bikes id)]
+    (if-let [bike (get-bike-by-id id)]
       {:status 200
        :headers {"Content-Type" "application/json"}
        :body (json/generate-string bike)}
@@ -74,5 +94,9 @@
 (defn -main
   "Start the bike server"
   [& args]
+  (println "Initializing database...")
+  (db/init-db!)
+  (migrations/create-table-if-not-exists!)
   (println "Starting bike server on port 3000...")
-  (run-server app {:port 3000}))
+  (run-server app {:port 3000})
+  (println "Server started successfully!"))

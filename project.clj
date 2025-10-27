@@ -9,7 +9,11 @@
                  [ring/ring-defaults "0.4.0"]
                  [ring/ring-json "0.5.1"]
                  [cheshire "5.12.0"]
-                 [http-kit "2.8.0"]]
+                 [http-kit "2.8.0"]
+                 [hikari-cp "3.1.0"]
+                 [org.postgresql/postgresql "42.7.0"]
+                 [environ "1.2.0"]
+                 [org.clojure/java.jdbc "0.7.12"]]
   :main ^:skip-aot clj-backend.core
   :target-path "target/%s"
   :profiles {:uberjar {:aot :all
