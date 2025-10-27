@@ -7,35 +7,15 @@
             [cheshire.core :as json]
             [clj-backend.db :as db]
             [clj-backend.migrations :as migrations]
-            [clojure.java.jdbc :as jdbc])
-  (:import [java.util UUID])
+            [clj-backend.adapter.postgres-repository :refer [make-postgres-repository]]
+            [clj-backend.domain.bike-repository :refer [create-bike get-all-bikes get-bike-by-id]])
   (:gen-class))
 
-;; Database functions
-(defn get-all-bikes []
-  (jdbc/query {:datasource @db/datasource}
-              ["SELECT id, brand, model, year, color, price FROM bikes ORDER BY created_at DESC"]))
+;; Repository (will be injected)
+(defonce bike-repository (atom nil))
 
-(defn get-bike-by-id [id]
-  (first (jdbc/query {:datasource @db/datasource}
-                     ["SELECT id, brand, model, year, color, price FROM bikes WHERE id = ?::uuid" id])))
-
-(defn create-bike! [brand model year color price]
-  (let [id (UUID/randomUUID)]
-    (jdbc/insert! {:datasource @db/datasource}
-                  :bikes
-                  {:id id
-                   :brand brand
-                   :model model
-                   :year year
-                   :color color
-                   :price price})
-    {:id (str id)
-     :brand brand
-     :model model
-     :year year
-     :color color
-     :price price}))
+(defn set-repository! [repo]
+  (reset! bike-repository repo))
 
 ;; Routes
 (defroutes app-routes
@@ -43,11 +23,12 @@
   (POST "/bikes" request
     (try
       (let [body (:body request)
-            bike (create-bike! (:brand body)
-                               (:model body)
-                               (:year body)
-                               (:color body)
-                               (bigdec (:price body)))]
+            bike-data {:brand (:brand body)
+                       :model (:model body)
+                       :year (:year body)
+                       :color (:color body)
+                       :price (bigdec (:price body))}
+            bike (create-bike @bike-repository bike-data)]
         {:status 201
          :headers {"Content-Type" "application/json"}
          :body (json/generate-string bike)})
@@ -60,11 +41,11 @@
   (GET "/bikes" []
     {:status 200
      :headers {"Content-Type" "application/json"}
-     :body (json/generate-string (get-all-bikes))})
+     :body (json/generate-string (get-all-bikes @bike-repository))})
 
   ;; GET /bikes/:id - Get a specific bike
   (GET "/bikes/:id" [id]
-    (if-let [bike (get-bike-by-id id)]
+    (if-let [bike (get-bike-by-id @bike-repository id)]
       {:status 200
        :headers {"Content-Type" "application/json"}
        :body (json/generate-string bike)}
@@ -97,6 +78,11 @@
   (println "Initializing database...")
   (db/init-db!)
   (migrations/create-table-if-not-exists!)
+  
+  ;; Wire up the repository adapter
+  (println "Initializing repository...")
+  (set-repository! (make-postgres-repository @db/datasource))
+  
   (println "Starting bike server on port 3000...")
   (run-server app {:port 3000})
   (println "Server started successfully!"))
